@@ -5,8 +5,8 @@
 Apps keep working with no connection. When it comes back, Accord passes every change along, and
 every device ends up with the same data. Every device, in accord.
 
-> **Status: in development, not released.** Nothing here is ready to use yet. Follow the
-> milestones in [`../plan.md`](../plan.md) and the decisions in [`docs/adr/`](docs/adr/).
+> **Status: in development, not released.** Nothing here is ready to use yet. Design decisions
+> are recorded in [`docs/adr/`](docs/adr/).
 
 ## What it will be
 

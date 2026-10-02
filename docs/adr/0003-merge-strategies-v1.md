@@ -25,4 +25,4 @@ and keeps the field conflicted, so a third offline edit is never lost under a re
 ## Consequences
 
 - The app gets a conflict API: list conflicted fields, read all values, write a resolution.
-- `conflict()` fields are never auto-resolved; tests assert it (plan.md §6.4).
+- `conflict()` fields are never auto-resolved; tests assert it.

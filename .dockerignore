@@ -4,3 +4,4 @@
 .git
 .github
 docs
+!examples/server

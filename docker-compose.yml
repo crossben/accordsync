@@ -19,6 +19,10 @@ services:
     build: .
     environment:
       ACCORD_DATABASE_URL: postgres://accord:accord@postgres:5432/accord
+      # Development only: tokens signed with this shared secret. Use ACCORD_JWKS_URL in production.
+      ACCORD_DEV_SECRET: dev-secret-change-me-at-least-32-bytes
+    volumes:
+      - ./examples/server/accord.config.ts:/app/config/accord.config.ts:ro
     ports:
       - '8080:8080'
     depends_on:

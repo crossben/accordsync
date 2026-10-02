@@ -41,6 +41,24 @@ Last write wins is not an accord. It's a coin toss.
 - **Not magic for business conflicts.** If two agents approve the same dossier differently, Accord
   keeps both values and tells your app. It never guesses on money or legal status.
 
+## Run a server
+
+Describe your records and who may see them in an `accord.config.ts`
+([example](examples/server/accord.config.ts)):
+
+```ts
+export default defineServer({
+  schema,
+  scopes: { dossier: (r) => [`agent:${r.fields.agent}`, `zone:${r.fields.zone}`] },
+  access: (claims) => ({ read: [`agent:${claims.sub}`], write: [`agent:${claims.sub}`] }),
+  auth: { jwksUrl: 'https://your-app.example/.well-known/jwks.json' },
+});
+```
+
+Then `ACCORD_DATABASE_URL=postgres://… accord serve --config accord.config.ts`, or
+`docker compose up --build` to try the example. The wire protocol is in
+[docs/protocol.md](docs/protocol.md).
+
 ## Repository layout
 
 | Path                 | What                                                                |

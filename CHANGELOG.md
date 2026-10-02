@@ -19,5 +19,12 @@ All notable changes to this project are documented here. The format follows
 - Convergence suite: under random faults, every device and the server converge to the state of
   exactly the accepted ops; counters equal the sum of accepted increments.
 - `LocalWriter.discard`: refused ops are rolled back locally (ADR-0006).
+- M3 sync server (`@accordsync/server`): `accord serve` with a TypeScript config
+  (`defineServer`: schema, scope functions, access from JWT claims), JWT verification through JWKS
+  (or a dev HS256 secret), `POST /v1/push` and `GET /v1/pull` with paging, scope entry history,
+  scope exit markers and `resync_required` (ADR-0007).
+- PostgreSQL append-only feed (enforced by a trigger), device-to-user binding, serialized pushes so
+  cursors never skip an op.
+- `docs/protocol.md` and generated JSON Schemas in `protocol/v1/`.
 - M0 skeleton: pnpm monorepo (`core`, `client`, `server`, `simulator`), server health endpoint
   with PostgreSQL migrations, Docker image, Compose file, CI.

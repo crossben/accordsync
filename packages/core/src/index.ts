@@ -6,6 +6,7 @@ export const PROTOCOL_VERSION = 1;
 
 export { canonicalJson } from './canonical';
 export {
+  assertNode,
   ClockSkewError,
   compareHlc,
   decodeHlc,

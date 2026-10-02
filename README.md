@@ -59,6 +59,20 @@ Then `ACCORD_DATABASE_URL=postgres://… accord serve --config accord.config.ts`
 `docker compose up --build` to try the example. The wire protocol is in
 [docs/protocol.md](docs/protocol.md).
 
+## Use it in an app
+
+```ts
+const accord = await AccordClient.open({
+  schema,
+  storage: new IndexedDbStorage('my-app'),
+  transport: httpTransport({ url: 'https://sync.example.com', getToken: () => auth.token() }),
+});
+accord.start();
+await accord.inc('dossier:91', 'visits', 1); // works offline
+```
+
+See [docs/client.md](docs/client.md): conflicts, events, SQLite on React Native.
+
 ## Repository layout
 
 | Path                 | What                                                                |

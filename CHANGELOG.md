@@ -26,5 +26,12 @@ All notable changes to this project are documented here. The format follows
 - PostgreSQL append-only feed (enforced by a trigger), device-to-user binding, serialized pushes so
   cursors never skip an op.
 - `docs/protocol.md` and generated JSON Schemas in `protocol/v1/`.
+- M4 client (`@accordsync/client`): `AccordClient` with local-first writes, `sync()` and background
+  sync with exponential backoff and jitter, conflict API (`conflicts`, `resolve`), events
+  (`change`, `refused`, `synced`, `resync`, `error`), refused-op rollback, scope exit, resync that
+  keeps unpushed edits, and restart without op id reuse.
+- Storage adapters: IndexedDB, SQLite (any driver: wa-sqlite, op-sqlite, `node:sqlite`) and memory,
+  with one shared contract test suite.
+- `docs/client.md`.
 - M0 skeleton: pnpm monorepo (`core`, `client`, `server`, `simulator`), server health endpoint
   with PostgreSQL migrations, Docker image, Compose file, CI.

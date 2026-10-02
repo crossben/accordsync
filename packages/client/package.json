@@ -27,5 +27,13 @@
   },
   "dependencies": {
     "@accordsync/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@accordsync/server": "workspace:*",
+    "@accordsync/simulator": "workspace:*",
+    "@testcontainers/postgresql": "^12.2.0",
+    "fake-indexeddb": "^6.2.5",
+    "jose": "^6.2.12",
+    "kysely": "^0.29.6"
   }
 }

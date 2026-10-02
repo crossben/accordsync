@@ -6,6 +6,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.strict,
   {
+    // With noUncheckedIndexedAccess, `!` is how we state an index is known to exist.
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+  },
+  {
     files: ['packages/core/src/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {

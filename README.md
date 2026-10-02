@@ -16,13 +16,17 @@ every device ends up with the same data. Every device, in accord.
 - On reconnect, operations sync both ways and merge by **rules you declare per field**:
 
   ```ts
-  defineRecord('dossier', {
-    client_name: lww(), // highest clock wins
-    documents: set(), // add-wins set
-    visits: counter(), // increments are never lost
-    status: conflict(), // never auto-resolved: your app decides
+  const schema = defineSchema({
+    dossier: {
+      client_name: lww(), // highest clock wins
+      documents: set(), // add-wins set
+      visits: counter(), // increments are never lost
+      status: conflict(), // never auto-resolved: your app decides
+    },
   });
   ```
+
+  See [docs/merge-rules.md](docs/merge-rules.md).
 
 - A self-hosted server (Node, PostgreSQL) enforces who can read and write what.
 - Correctness is the product: property-based convergence tests under simulated network faults,

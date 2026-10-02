@@ -8,6 +8,7 @@ import {
   LocalWriter,
   type Op,
   parseOpId,
+  type RecordSnapshot,
   type Schema,
   type SetElement,
 } from '@accordsync/core';
@@ -106,6 +107,7 @@ export class AccordClient {
     const deviceId =
       snap.meta?.deviceId ?? opts.deviceId ?? `d${crypto.randomUUID().replaceAll('-', '')}`;
     const client = new AccordClient(o, deviceId, snap.meta);
+    for (const base of snap.snapshots) client.#writer.replica.loadSnapshot(base);
     for (const raw of snap.ops) client.#writer.receive(decodeOp(raw));
     for (const id of [...snap.outbox].sort(bySeq)) {
       const op = snap.ops.find((x) => x.op_id === id);
@@ -265,32 +267,53 @@ export class AccordClient {
   }
 
   async #applyPage(items: PullItem[], cursor: number): Promise<void> {
-    const put: Op[] = [];
+    const put = new Map<string, Op>();
     const forgotten: string[] = [];
+    const snapshots: RecordSnapshot[] = [];
+    const dropSnapshots: string[] = [];
     const changed = new Set<string>();
+    const pending = new Set(this.#outbox.keys());
+    const notPending = (record: string) =>
+      this.#writer.replica
+        .ops()
+        .filter((o) => o.record === record && !pending.has(o.opId))
+        .map((o) => o.opId);
     for (const item of items) {
       if (item.type === 'op') {
         const op = decodeOp(item.op);
         if (this.#writer.receive(op) === 'applied') {
-          put.push(op);
+          put.set(op.opId, op);
           changed.add(op.record);
         }
-        continue;
-      }
-      // The record left our scope: forget it, except our own unpushed edits, which will be
-      // pushed, refused and rolled back like any other refused write.
-      const ids = this.#writer.replica
-        .ops()
-        .filter((o) => o.record === item.record && !this.#outbox.has(o.opId))
-        .map((o) => o.opId);
-      if (ids.length > 0) {
-        this.#writer.discard(ids);
+      } else if (item.type === 'snapshot') {
+        // A compacted record: its snapshot replaces the ops it folded; our unpushed edits stay on
+        // top. The server sends a snapshot before any later op of that record.
+        const record = item.snapshot.record;
+        for (const id of notPending(record)) {
+          put.delete(id);
+          forgotten.push(id);
+        }
+        this.#writer.replica.loadSnapshot(item.snapshot, pending);
+        snapshots.push(item.snapshot);
+        changed.add(record);
+      } else {
+        // The record left our scope: forget it, except our own unpushed edits, which will be
+        // pushed, refused and rolled back like any other refused write.
+        const ids = notPending(item.record);
+        for (const id of ids) put.delete(id);
+        this.#writer.forget(item.record, pending);
         forgotten.push(...ids);
+        dropSnapshots.push(item.record);
         changed.add(item.record);
       }
     }
     this.#cursor = Math.max(this.#cursor, cursor);
-    await this.#persist({ putOps: put.map(encodeOp), deleteOps: forgotten });
+    await this.#persist({
+      deleteOps: forgotten,
+      deleteSnapshots: dropSnapshots.filter((r) => !snapshots.some((s) => s.record === r)),
+      putSnapshots: snapshots.filter((s) => !dropSnapshots.includes(s.record)),
+      putOps: [...put.values()].map(encodeOp),
+    });
     if (changed.size > 0) this.#emit('change', { records: [...changed] });
   }
 

@@ -39,4 +39,36 @@ describe('server against real PostgreSQL', () => {
     const other = await preflight('https://evil.example');
     expect(other.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
+
+  it('serves Prometheus metrics only with the metrics token', async () => {
+    const app = createApp({ db: h.db, def: { ...def, metrics: { token: 'scrape-me' } } });
+    await app.request('/health');
+    expect((await app.request('/metrics')).status).toBe(401);
+    const res = await app.request('/metrics', { headers: { Authorization: 'Bearer scrape-me' } });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    for (const name of [
+      'accord_feed_head',
+      'accord_devices_live',
+      'accord_sync_lag',
+      'accord_push_ops_total',
+      'accord_http_request_duration_seconds_bucket',
+    ]) {
+      expect(body).toContain(name);
+    }
+    expect((await createApp({ db: h.db, def }).request('/metrics')).status).toBe(404);
+  });
+
+  it('refuses request bodies over the size limit', async () => {
+    const app = createApp({
+      db: h.db,
+      def: { ...def, limits: { ...def.limits, maxBodyBytes: 1024 } },
+    });
+    const res = await app.request('/v1/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': '5000' },
+      body: JSON.stringify({ ops: [], pad: 'x'.repeat(5000) }),
+    });
+    expect(res.status).toBe(413);
+  });
 });

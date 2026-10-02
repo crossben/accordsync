@@ -47,7 +47,12 @@ const adapters: Record<string, () => { store: StorageAdapter; reopen?: () => Sto
 for (const [name, make] of Object.entries(adapters)) {
   describe(`${name} storage`, () => {
     it('starts empty', async () => {
-      expect(await make().store.load()).toEqual({ meta: undefined, ops: [], outbox: [] });
+      expect(await make().store.load()).toEqual({
+        meta: undefined,
+        snapshots: [],
+        ops: [],
+        outbox: [],
+      });
     });
 
     it('commits ops, outbox and meta, and applies deletes, clears and outbox removals', async () => {
@@ -67,6 +72,22 @@ for (const [name, make] of Object.entries(adapters)) {
       expect((await store.load()).ops).toEqual([op(9)]);
     });
 
+    it('stores snapshots, replaced by record, cleared with the ops', async () => {
+      const { store } = make();
+      const snap = (n: number) => ({
+        record: 'dossier:1',
+        fields: { visits: { strategy: 'counter' as const, total: n } },
+      });
+      await store.commit({ putSnapshots: [snap(1)] });
+      await store.commit({ putSnapshots: [snap(2)] });
+      expect((await store.load()).snapshots).toEqual([snap(2)]);
+      await store.commit({ deleteSnapshots: ['dossier:1'] });
+      expect((await store.load()).snapshots).toEqual([]);
+      await store.commit({ putSnapshots: [snap(3)], putOps: [op(1)] });
+      await store.commit({ clearOps: true });
+      expect(await store.load()).toMatchObject({ snapshots: [], ops: [] });
+    });
+
     it('returns copies, not live references', async () => {
       const { store } = make();
       const o = op(1);
@@ -81,7 +102,7 @@ for (const [name, make] of Object.entries(adapters)) {
         await store.commit({ putOps: [op(1)], outboxAdd: ['d:1'], meta: meta(2) });
         await store.close?.();
         const again = await reopen!().load();
-        expect(again).toEqual({ meta: meta(2), ops: [op(1)], outbox: ['d:1'] });
+        expect(again).toEqual({ meta: meta(2), snapshots: [], ops: [op(1)], outbox: ['d:1'] });
       });
     }
   });

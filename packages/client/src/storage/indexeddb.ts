@@ -1,7 +1,7 @@
-import type { WireOp } from '@accordsync/core';
+import type { RecordSnapshot, WireOp } from '@accordsync/core';
 import type { StorageAdapter, StorageSnapshot, StorageTx, StoredMeta } from './adapter';
 
-const STORES = ['ops', 'outbox', 'meta'] as const;
+const STORES = ['ops', 'outbox', 'meta', 'snapshots'] as const;
 
 /** Durable storage in the browser's IndexedDB. One database per Accord client. */
 export class IndexedDbStorage implements StorageAdapter {
@@ -15,12 +15,13 @@ export class IndexedDbStorage implements StorageAdapter {
   async load(): Promise<StorageSnapshot> {
     const db = await this.#open();
     const tx = db.transaction(STORES, 'readonly');
-    const [ops, outbox, meta] = await Promise.all([
+    const [ops, outbox, meta, snapshots] = await Promise.all([
       req<WireOp[]>(tx.objectStore('ops').getAll()),
       req<IDBValidKey[]>(tx.objectStore('outbox').getAllKeys()),
       req<StoredMeta | undefined>(tx.objectStore('meta').get('meta')),
+      req<RecordSnapshot[]>(tx.objectStore('snapshots').getAll()),
     ]);
-    return { meta, ops, outbox: outbox.map(String) };
+    return { meta, snapshots, ops, outbox: outbox.map(String) };
   }
 
   async commit(t: StorageTx): Promise<void> {
@@ -28,7 +29,13 @@ export class IndexedDbStorage implements StorageAdapter {
     const tx = db.transaction(STORES, 'readwrite');
     const ops = tx.objectStore('ops');
     const outbox = tx.objectStore('outbox');
-    if (t.clearOps) ops.clear();
+    const snapshots = tx.objectStore('snapshots');
+    if (t.clearOps) {
+      ops.clear();
+      snapshots.clear();
+    }
+    for (const r of t.deleteSnapshots ?? []) snapshots.delete(r);
+    for (const snap of t.putSnapshots ?? []) snapshots.put(snap);
     for (const id of t.deleteOps ?? []) ops.delete(id);
     for (const op of t.putOps ?? []) ops.put(op);
     for (const id of t.outboxAdd ?? []) outbox.put(true, id);
@@ -47,11 +54,15 @@ export class IndexedDbStorage implements StorageAdapter {
 
   #open(): Promise<IDBDatabase> {
     this.#db ??= new Promise((resolve, reject) => {
-      const open = this.factory.open(this.name, 1);
-      open.onupgradeneeded = () => {
-        open.result.createObjectStore('ops', { keyPath: 'op_id' });
-        open.result.createObjectStore('outbox');
-        open.result.createObjectStore('meta');
+      const open = this.factory.open(this.name, 2);
+      open.onupgradeneeded = (e) => {
+        const db = open.result;
+        if (e.oldVersion < 1) {
+          db.createObjectStore('ops', { keyPath: 'op_id' });
+          db.createObjectStore('outbox');
+          db.createObjectStore('meta');
+        }
+        if (e.oldVersion < 2) db.createObjectStore('snapshots', { keyPath: 'record' });
       };
       open.onsuccess = () => resolve(open.result);
       open.onerror = () => reject(open.error);

@@ -54,6 +54,19 @@ export const PullItemSchema = Type.Union(
   [
     Type.Object({ type: Type.Literal('op'), op: Type.Unsafe<object>({ $ref: 'WireOp' }) }),
     Type.Object(
+      {
+        type: Type.Literal('snapshot'),
+        snapshot: Type.Object({
+          record: Type.String(),
+          fields: Type.Record(Type.String(), Type.Unknown()),
+        }),
+      },
+      {
+        description:
+          "A record's state with its older ops folded away: replace the local record with it, then re-apply local unpushed ops (ADR-0008).",
+      },
+    ),
+    Type.Object(
       { type: Type.Literal('exit'), record: Type.String() },
       { description: 'The record left your scope: delete the local copy (ADR-0004).' },
     ),
@@ -85,7 +98,9 @@ export const PullResponseSchema = Type.Union(
 
 export type PushResponse = Static<typeof PushResponseSchema>;
 export type PullItem =
-  { type: 'op'; op: import('@accordsync/core').WireOp } | { type: 'exit'; record: string };
+  | { type: 'op'; op: import('@accordsync/core').WireOp }
+  | { type: 'snapshot'; snapshot: import('@accordsync/core').RecordSnapshot }
+  | { type: 'exit'; record: string };
 export type PullResponse =
   { items: PullItem[]; cursor: number; has_more: boolean } | { resync_required: true };
 

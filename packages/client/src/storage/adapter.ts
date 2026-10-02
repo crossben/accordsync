@@ -1,4 +1,4 @@
-import type { WireOp } from '@accordsync/core';
+import type { RecordSnapshot, WireOp } from '@accordsync/core';
 
 /** What a device must remember between launches. */
 export interface StoredMeta {
@@ -12,6 +12,8 @@ export interface StoredMeta {
 
 export interface StorageSnapshot {
   meta: StoredMeta | undefined;
+  /** Compacted records: their state with older ops folded away (ADR-0008). Loaded before ops. */
+  snapshots: RecordSnapshot[];
   /** Every op the device holds (its own and received). */
   ops: WireOp[];
   /** Ids of local ops not yet acknowledged by the server. */
@@ -20,7 +22,10 @@ export interface StorageSnapshot {
 
 /** One atomic change. Applied in this order: clear, delete, put, outbox changes, meta. */
 export interface StorageTx {
+  /** Removes every op and snapshot. */
   clearOps?: boolean;
+  deleteSnapshots?: readonly string[];
+  putSnapshots?: readonly RecordSnapshot[];
   deleteOps?: readonly string[];
   putOps?: readonly WireOp[];
   outboxAdd?: readonly string[];

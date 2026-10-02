@@ -1,11 +1,14 @@
-import type { WireOp } from '@accordsync/core';
+import type { RecordSnapshot, WireOp } from '@accordsync/core';
 
 export interface PushResult {
   acked: string[];
   refused: { op_id: string; reason: string }[];
 }
 
-export type PullItem = { type: 'op'; op: WireOp } | { type: 'exit'; record: string };
+export type PullItem =
+  | { type: 'op'; op: WireOp }
+  | { type: 'snapshot'; snapshot: RecordSnapshot }
+  | { type: 'exit'; record: string };
 
 export type PullResult =
   { items: PullItem[]; cursor: number; has_more: boolean } | { resync_required: true };

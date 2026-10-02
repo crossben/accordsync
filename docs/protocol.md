@@ -68,6 +68,9 @@ Start with `cursor=0`. The response:
 ```
 
 - Apply every `op` item (applying an op twice is a no-op).
+- `snapshot`: a compacted record. Replace your copy of the record with it, then re-apply your own
+  unpushed ops for that record ([ADR-0008](adr/0008-snapshots.md)). It always comes before any later
+  op of that record.
 - `exit`: the record left your scope. Delete the local copy
   ([ADR-0004](adr/0004-scope-exit.md)). Before pulling, always push your outbox first, so your
   pending edits to it are either accepted or refused.

@@ -30,7 +30,7 @@ export {
   type RemoveOp,
   type SetElement,
 } from './op';
-export { type ApplyResult, Replica } from './replica';
+export { type ApplyResult, type RecordSnapshot, Replica } from './replica';
 export {
   conflict,
   counter,
@@ -42,6 +42,6 @@ export {
   type Strategy,
   type StrategyName,
 } from './schema';
-export type { ConflictRead, FieldRead } from './strategies';
+export type { ConflictRead, FieldRead, FieldSnapshot } from './strategies';
 export { decodeOp, encodeOp, type WireOp } from './wire';
 export { DEFAULT_MAX_SKEW_MS, LocalWriter, type LocalWriterOptions } from './writer';

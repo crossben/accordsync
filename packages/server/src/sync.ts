@@ -3,12 +3,15 @@ import {
   DEFAULT_MAX_SKEW_MS,
   encodeOp,
   type Op,
+  type RecordSnapshot,
   recordType,
   Replica,
+  type WireOp,
 } from '@accordsync/core';
-import { sql } from 'kysely';
-import type { Db } from './db';
+import { type Insertable, sql } from 'kysely';
+import type { Database, Db } from './db';
 import type { ServerDefinition } from './define';
+import type { Metrics } from './metrics';
 import type { PullItem, PullResponse, PushResponse } from './protocol';
 
 export class BadRequest extends Error {
@@ -30,6 +33,7 @@ export interface SyncContext {
   db: Db;
   def: ServerDefinition;
   now: () => number;
+  metrics?: Metrics;
 }
 
 /**
@@ -37,17 +41,41 @@ export interface SyncContext {
  * Without it, a puller could see seq 11 before a slower transaction commits seq 10, move its
  * cursor past 10, and never receive that op (ADR-0007).
  */
-const FEED_LOCK = 0x4acc0d;
+export const FEED_LOCK = 0x4acc0d;
 
-/** Registers the device to this user on first sight; refuses a device id owned by someone else. */
-export async function touchDevice(db: Db, caller: Caller): Promise<void> {
+export const DAY_MS = 24 * 3_600_000;
+
+/** Runs tasks one at a time, in arrival order. */
+class Queue {
+  #tail: Promise<unknown> = Promise.resolve();
+  run<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.#tail.then(task);
+    this.#tail = result.catch(() => undefined);
+    return result;
+  }
+}
+const pushQueue = new Queue();
+
+export function deviceTtlMs(def: ServerDefinition): number {
+  return (def.compaction?.deviceTtlDays ?? 30) * DAY_MS;
+}
+
+/**
+ * Registers the device to this user on first sight; refuses a device id owned by someone else.
+ * A device seen again after the retirement TTL is flagged: its next pull must start from zero,
+ * because compaction may have folded away ops it never received (ADR-0005).
+ */
+export async function touchDevice(db: Db, caller: Caller, ttlMs: number): Promise<void> {
   const row = await db
     .insertInto('devices')
     .values({ device_id: caller.deviceId, sub: caller.sub, read_keys: null })
     .onConflict((oc) =>
       oc
         .column('device_id')
-        .doUpdateSet({ last_seen: sql`now()` })
+        .doUpdateSet({
+          last_seen: sql`now()`,
+          needs_resync: sql`devices.needs_resync or devices.last_seen < now() - make_interval(secs => ${ttlMs / 1000})`,
+        })
         .where('devices.sub', '=', caller.sub),
     )
     .returning('sub')
@@ -66,6 +94,7 @@ export async function push(
 
   const acked: string[] = [];
   const refused: { op_id: string; reason: string }[] = [];
+  let duplicates = 0;
   const byRecord = new Map<string, Op[]>();
 
   for (const input of raw) {
@@ -87,81 +116,107 @@ export async function push(
     byRecord.set(op.record, list);
   }
 
-  await ctx.db.transaction().execute(async (trx) => {
-    await sql`select pg_advisory_xact_lock(${FEED_LOCK})`.execute(trx);
-    const now = ctx.now();
+  // Pushes queue here, in the process, before taking a database connection: waiting on the feed
+  // lock while holding a connection would starve pulls of connections. The advisory lock below
+  // still serializes pushes across several server processes.
+  await pushQueue.run(() =>
+    ctx.db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(${FEED_LOCK})`.execute(trx);
+      const now = ctx.now();
 
-    for (const record of [...byRecord.keys()].sort()) {
-      const replica = new Replica(ctx.def.schema);
-      const history = await trx
-        .selectFrom('feed')
-        .select('op')
-        .where('record', '=', record)
-        .where('kind', '=', 'op')
-        .orderBy('seq')
-        .execute();
-      for (const row of history) replica.apply(decodeOp(row.op));
-      const existing = await trx
-        .selectFrom('records')
-        .select('scopes')
-        .where('record', '=', record)
-        .executeTakeFirst();
-      let scopes: string[] | null = existing?.scopes ?? null;
+      for (const record of [...byRecord.keys()].sort()) {
+        const existing = await trx
+          .selectFrom('records')
+          .select(['scopes', 'state'])
+          .where('record', '=', record)
+          .executeTakeFirst();
+        let replica: Replica;
+        if (existing?.state) {
+          replica = new Replica(ctx.def.schema);
+          replica.loadSnapshot(existing.state);
+        } else {
+          // A new record, or one written before migration 0004: rebuild from the feed.
+          replica = await loadRecord(trx as unknown as Db, ctx.def, record);
+        }
+        const pending = byRecord.get(record)!;
+        const ids = pending.map((o) => o.opId);
+        // Already applied (in the feed) or folded by compaction: acknowledge, never apply twice.
+        const seen = new Set(
+          [
+            ...(await trx.selectFrom('feed').select('op_id').where('op_id', 'in', ids).execute()),
+            ...(await trx
+              .selectFrom('compacted_ops')
+              .select('op_id')
+              .where('op_id', 'in', ids)
+              .execute()),
+          ].map((r) => r.op_id!),
+        );
+        let scopes: string[] | null = existing?.scopes ?? null;
+        let changed = false;
+        const rows: Insertable<Database['feed']>[] = [];
 
-      for (const op of byRecord.get(record)!) {
-        if (replica.has(op.opId)) {
-          acked.push(op.opId); // a retried push: already applied
-          continue;
-        }
-        const reason = check(ctx, caller, replica, scopes, op, now, maxSkewMs);
-        if (reason) {
-          refused.push({ op_id: op.opId, reason });
-          continue;
-        }
-        replica.apply(op);
-        let next: string[];
-        try {
-          next = scopesOf(ctx.def, replica, record);
-        } catch (e) {
-          throw new Error(`scope function failed for ${record}: ${(e as Error).message}`, {
-            cause: e,
-          });
-        }
-        await trx
-          .insertInto('feed')
-          .values({
-            kind: 'op',
-            record,
-            op_id: op.opId,
-            op: encodeOp(op),
-            scopes: next,
-            scopes_before: null,
-          })
-          .execute();
-        if (scopes === null || !sameKeys(scopes, next)) {
-          await trx
-            .insertInto('feed')
-            .values({
+        for (const op of pending) {
+          if (seen.has(op.opId) || replica.has(op.opId)) {
+            duplicates++;
+            acked.push(op.opId); // a retried push: already applied
+            continue;
+          }
+          const reason = check(ctx, caller, replica, scopes, op, now, maxSkewMs);
+          if (reason) {
+            refused.push({ op_id: op.opId, reason });
+            continue;
+          }
+          replica.apply(op);
+          let next: string[];
+          try {
+            next = scopesOf(ctx.def, replica, record);
+          } catch (e) {
+            throw new Error(`scope function failed for ${record}: ${(e as Error).message}`, {
+              cause: e,
+            });
+          }
+          // A scope change goes in before the op that caused it: a device the record is entering
+          // receives the history (snapshot and older ops) first, then this op on top.
+          if (scopes === null || !sameKeys(scopes, next)) {
+            rows.push({
               kind: 'scope',
               record,
               op_id: null,
               op: null,
               scopes: next,
               scopes_before: scopes ?? [],
-            })
-            .execute();
+            });
+          }
+          rows.push({
+            kind: 'op',
+            record,
+            op_id: op.opId,
+            op: encodeOp(op),
+            scopes: next,
+            scopes_before: null,
+          });
+          scopes = next;
+          changed = true;
+          acked.push(op.opId);
+        }
+        if (changed) {
+          // One insert per record: rows get their seq in this order.
+          await trx.insertInto('feed').values(rows).execute();
+          const state = JSON.stringify(replica.snapshotRecord(record)) as never;
           await trx
             .insertInto('records')
-            .values({ record, scopes: next })
-            .onConflict((oc) => oc.column('record').doUpdateSet({ scopes: next }))
+            .values({ record, scopes: scopes!, state })
+            .onConflict((oc) => oc.column('record').doUpdateSet({ scopes: scopes!, state }))
             .execute();
         }
-        scopes = next;
-        acked.push(op.opId);
       }
-    }
-  });
+    }),
+  );
 
+  ctx.metrics?.pushBatch.observe(raw.length);
+  ctx.metrics?.pushOps.inc({ result: 'duplicate' }, duplicates);
+  ctx.metrics?.pushOps.inc({ result: 'refused' }, refused.length);
+  ctx.metrics?.pushOps.inc({ result: 'accepted' }, acked.length - duplicates);
   return { acked, refused };
 }
 
@@ -214,17 +269,23 @@ export async function pull(
     .execute(async (trx): Promise<PullResponse> => {
       const device = await trx
         .selectFrom('devices')
-        .select('read_keys')
+        .select(['read_keys', 'needs_resync'])
         .where('device_id', '=', caller.deviceId)
         .executeTakeFirstOrThrow();
-      if (cursor > 0 && !sameKeys(device.read_keys ?? [], read)) return { resync_required: true };
-      if (cursor === 0) {
-        await trx
-          .updateTable('devices')
-          .set({ read_keys: read })
-          .where('device_id', '=', caller.deviceId)
-          .execute();
+      if (cursor > 0 && (device.needs_resync || !sameKeys(device.read_keys ?? [], read))) {
+        ctx.metrics?.pulls.inc({ result: 'resync_required' });
+        return { resync_required: true };
       }
+      // The device has applied everything up to `cursor`: compaction may fold ops below it.
+      await trx
+        .updateTable('devices')
+        .set(
+          cursor === 0
+            ? { read_keys: read, needs_resync: false, cursor: '0' }
+            : { cursor: sql`greatest(cursor, ${cursor})` as never },
+        )
+        .where('device_id', '=', caller.deviceId)
+        .execute();
 
       const { head } = await trx
         .selectFrom('feed')
@@ -237,7 +298,7 @@ export async function pull(
         .where('seq', '<=', head as never)
         .where(
           // Wrapped in parentheses: Kysely ANDs this with the seq bounds above.
-          sql<boolean>`((kind = 'op' and scopes && ${read}::text[])
+          sql<boolean>`((kind in ('op', 'snapshot') and scopes && ${read}::text[])
             or (kind = 'scope' and (scopes_before && ${read}::text[]) <> (scopes && ${read}::text[])))`,
         )
         .orderBy('seq')
@@ -246,27 +307,32 @@ export async function pull(
 
       const items: PullItem[] = [];
       const sent = new Set<string>();
-      const sendOp = (op: PullItem & { type: 'op' }) => {
-        if (sent.has(op.op.op_id)) return;
-        sent.add(op.op.op_id);
-        items.push(op);
+      const send = (row: { kind: string; op: unknown }) => {
+        if (row.kind === 'snapshot') {
+          items.push({ type: 'snapshot', snapshot: row.op as RecordSnapshot });
+          return;
+        }
+        const op = row.op as WireOp;
+        if (sent.has(op.op_id)) return;
+        sent.add(op.op_id);
+        items.push({ type: 'op', op });
       };
       for (const row of rows) {
-        if (row.kind === 'op') {
-          sendOp({ type: 'op', op: row.op! });
+        if (row.kind === 'op' || row.kind === 'snapshot') {
+          send(row);
           continue;
         }
         if (overlaps(row.scopes, read)) {
           // The record entered the caller's scope: send its whole history up to this point.
           const history = await trx
             .selectFrom('feed')
-            .select('op')
+            .select(['kind', 'op'])
             .where('record', '=', row.record)
-            .where('kind', '=', 'op')
+            .where('kind', 'in', ['op', 'snapshot'])
             .where('seq', '<', row.seq as never)
             .orderBy('seq')
             .execute();
-          for (const h of history) sendOp({ type: 'op', op: h.op! });
+          for (const h of history) send(h);
         } else {
           items.push({ type: 'exit', record: row.record });
         }
@@ -274,8 +340,27 @@ export async function pull(
 
       const full = rows.length === limit;
       const next = full ? Number(rows[rows.length - 1]!.seq) : Number(head);
+      ctx.metrics?.pulls.inc({ result: 'page' });
+      ctx.metrics?.pullItems.inc(items.length);
       return { items, cursor: Math.max(cursor, next), has_more: full && next < Number(head) };
     });
+}
+
+/** A record's state on the server: its latest snapshot, then the ops after it. */
+export async function loadRecord(db: Db, def: ServerDefinition, record: string): Promise<Replica> {
+  const replica = new Replica(def.schema);
+  const rows = await db
+    .selectFrom('feed')
+    .select(['kind', 'op'])
+    .where('record', '=', record)
+    .where('kind', 'in', ['op', 'snapshot'])
+    .orderBy('seq')
+    .execute();
+  for (const row of rows) {
+    if (row.kind === 'snapshot') replica.loadSnapshot(row.op as RecordSnapshot);
+    else replica.apply(decodeOp(row.op));
+  }
+  return replica;
 }
 
 function scopesOf(def: ServerDefinition, replica: Replica, record: string): string[] {

@@ -5,7 +5,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp, createDb, defineServer, migrateToLatest } from '@accordsync/server';
+import { compact, createApp, createDb, defineServer, migrateToLatest } from '@accordsync/server';
 import { createRng } from '@accordsync/simulator';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { SignJWT } from 'jose';
@@ -54,6 +54,7 @@ const def = defineServer({
     };
   },
   auth: { hs256Secret: SECRET },
+  compaction: { minOps: 2 },
 });
 
 const sign = (sub: string, zones: string[]) =>
@@ -80,7 +81,7 @@ describe('clients and server, end to end', () => {
     await container?.stop();
   });
   beforeEach(async () => {
-    await sql`truncate feed, records, devices restart identity`.execute(db);
+    await sql`truncate feed, records, devices, compacted_ops restart identity`.execute(db);
     tokens.set('awa', await sign('awa', ['dakar']));
     tokens.set('moussa', await sign('moussa', ['dakar']));
     tokens.set('fatou', await sign('fatou', ['thies']));
@@ -303,6 +304,35 @@ describe('clients and server, end to end', () => {
       expect(new Set(states).size).toBe(1);
     }, 60_000);
   }
+
+  it('after compaction, a new device gets the snapshot, keeps it across a restart, and merges on top', async () => {
+    const awa = await open('awa', 'awa-phone');
+    await awa.assign('dossier:1', 'zone', 'dakar');
+    for (let i = 0; i < 4; i++) await awa.inc('dossier:1', 'visits', 1);
+    await awa.add('dossier:1', 'docs', 'a.pdf');
+    await awa.remove('dossier:1', 'docs', 'a.pdf');
+    await awa.assign('dossier:1', 'status', 'submitted');
+    await syncAll(awa);
+    await awa.sync(); // the server now knows Awa has everything
+    expect((await compact(db, def)).records).toBe(1);
+
+    const file = join(mkdtempSync(join(tmpdir(), 'accord-compact-')), 'd.db');
+    const tablet = await open('awa', 'awa-tablet', new SqliteStorage(nodeSqlite(file)));
+    await tablet.inc('dossier:1', 'visits', 10); // a blind offline write to a record it has never seen
+    await tablet.sync();
+    expect(tablet.read('dossier:1')).toEqual({ ...awa.read('dossier:1'), visits: 14 });
+    await tablet.close();
+
+    const again = await open('awa', 'x', new SqliteStorage(nodeSqlite(file)));
+    expect(again.read('dossier:1')).toMatchObject({
+      zone: 'dakar',
+      visits: 14,
+      docs: [],
+      status: { value: 'submitted' },
+    });
+    await awa.sync();
+    expect(awa.read('dossier:1')?.visits).toBe(14);
+  });
 
   it('syncs in the background, and backs off while the server is unreachable', async () => {
     let down = 2;

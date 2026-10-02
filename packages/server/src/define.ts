@@ -23,7 +23,23 @@ export interface ServerDefinition<S extends Schema = Schema> {
   auth: AuthConfig;
   /** Browser origins allowed to call the sync API, e.g. ['https://app.example.com']. */
   cors?: readonly string[];
+  /**
+   * Prometheus metrics at GET /metrics. Scrapers must send `Authorization: Bearer <token>`.
+   * Omit to disable the endpoint.
+   */
+  metrics?: { token: string };
+  /** Log compaction (ADR-0005, ADR-0008). */
+  compaction?: {
+    /** A device unseen this long is retired and no longer holds compaction back (default 30). */
+    deviceTtlDays?: number;
+    /** How often `accord serve` compacts; 0 disables it (default every hour). */
+    intervalMs?: number;
+    /** Only records with at least this many ops are compacted (default 20). */
+    minOps?: number;
+  };
   limits?: {
+    /** Request body size in bytes (default 5 MiB); larger requests get 413. */
+    maxBodyBytes?: number;
     /** Ops per push request (default 500). */
     maxPushOps?: number;
     /** Items per pull page (default 1000). */

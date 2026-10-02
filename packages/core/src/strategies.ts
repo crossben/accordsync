@@ -1,4 +1,4 @@
-import { compareHlc } from './hlc';
+import { compareHlc, decodeHlc, encodeHlc } from './hlc';
 import type { AssignOp, JsonValue, Op, OpId, SetElement } from './op';
 import { compareOpIds } from './op';
 import type { StrategyName } from './schema';
@@ -104,4 +104,55 @@ export function observedDeps(state: FieldState, element?: SetElement): OpId[] {
 function compareElements(a: SetElement, b: SetElement): number {
   if (typeof a !== typeof b) return typeof a === 'number' ? -1 : 1;
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * A field's live state, as JSON. Tombstones (removed set tags, superseded conflict values) are
+ * dropped: on the server feed every op comes after the ops its `deps` name, so nothing that a
+ * tombstone guards against can arrive after a snapshot (ADR-0008).
+ */
+export type FieldSnapshot =
+  | { strategy: 'lww'; winner: { opId: OpId; hlc: string; value: JsonValue } | null }
+  | { strategy: 'counter'; total: number }
+  | { strategy: 'set'; tags: [OpId, SetElement][] }
+  | { strategy: 'conflict'; live: [OpId, JsonValue][] };
+
+export function snapshotState(state: FieldState): FieldSnapshot {
+  switch (state.strategy) {
+    case 'lww': {
+      const w = state.winner;
+      return {
+        strategy: 'lww',
+        winner: w ? { opId: w.opId, hlc: encodeHlc(w.hlc), value: w.value } : null,
+      };
+    }
+    case 'counter':
+      return { strategy: 'counter', total: state.total };
+    case 'set':
+      return { strategy: 'set', tags: [...state.tags].sort(([a], [b]) => compareOpIds(a, b)) };
+    case 'conflict':
+      return { strategy: 'conflict', live: [...state.live].sort(([a], [b]) => compareOpIds(a, b)) };
+  }
+}
+
+export function stateFromSnapshot(snap: FieldSnapshot): FieldState {
+  switch (snap.strategy) {
+    case 'lww': {
+      const w = snap.winner;
+      const hlc = w ? decodeHlc(w.hlc) : undefined;
+      return {
+        strategy: 'lww',
+        winner:
+          w && hlc
+            ? { opId: w.opId, record: '', field: '', hlc, kind: 'assign', value: w.value, deps: [] }
+            : undefined,
+      };
+    }
+    case 'counter':
+      return { strategy: 'counter', total: snap.total };
+    case 'set':
+      return { strategy: 'set', tags: new Map(snap.tags), removed: new Set() };
+    case 'conflict':
+      return { strategy: 'conflict', live: new Map(snap.live), superseded: new Set() };
+  }
 }

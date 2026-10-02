@@ -5,10 +5,19 @@ import {
   applyOp,
   emptyState,
   type FieldRead,
+  type FieldSnapshot,
   type FieldState,
   observedDeps,
   readState,
+  snapshotState,
+  stateFromSnapshot,
 } from './strategies';
+
+/** A record's state with its history folded away (log compaction, ADR-0008). */
+export interface RecordSnapshot {
+  record: string;
+  fields: Record<string, FieldSnapshot>;
+}
 
 export type ApplyResult = 'applied' | 'duplicate';
 
@@ -20,6 +29,8 @@ export class Replica {
   readonly #schema: Schema;
   readonly #ops = new Map<OpId, Op>();
   readonly #records = new Map<string, Map<string, FieldState>>();
+  /** Snapshots this replica's state was started from, by record. */
+  readonly #bases = new Map<string, RecordSnapshot>();
 
   constructor(schema: Schema) {
     this.#schema = schema;
@@ -101,6 +112,54 @@ export class Replica {
   /** The whole state as canonical JSON: equal strings mean converged replicas. */
   snapshot(): string {
     return canonicalJson(Object.fromEntries(this.records().map((r) => [r, this.read(r)])));
+  }
+
+  /** The record's current state, with its history folded away. */
+  snapshotRecord(record: string): RecordSnapshot {
+    const fields: Record<string, FieldSnapshot> = {};
+    for (const [field, state] of this.#records.get(record) ?? [])
+      fields[field] = snapshotState(state);
+    return { record, fields };
+  }
+
+  /**
+   * Replaces a record's state with a snapshot and forgets that record's ops, except `keep` (local
+   * ops not yet on the server), which are applied again on top.
+   */
+  loadSnapshot(snap: RecordSnapshot, keep: ReadonlySet<OpId> = new Set()): void {
+    const reapply = [...this.#ops.values()].filter(
+      (o) => o.record === snap.record && keep.has(o.opId),
+    );
+    for (const [id, op] of this.#ops) if (op.record === snap.record) this.#ops.delete(id);
+    const fields = new Map<string, FieldState>();
+    for (const [field, fs] of Object.entries(snap.fields)) {
+      strategyFor(this.#schema, snap.record, field);
+      fields.set(field, stateFromSnapshot(fs));
+    }
+    this.#records.set(snap.record, fields);
+    this.#bases.set(snap.record, snap);
+    for (const op of reapply) this.apply(op);
+  }
+
+  /** A copy without the given ops (same snapshots, every other op): used to roll back. */
+  without(drop: ReadonlySet<OpId>): Replica {
+    const next = new Replica(this.#schema);
+    for (const snap of this.#bases.values()) next.loadSnapshot(snap);
+    for (const op of this.ops()) if (!drop.has(op.opId)) next.apply(op);
+    return next;
+  }
+
+  /** Forgets a record entirely (it left this device's scope), except ops in `keep`. */
+  forget(record: string, keep: ReadonlySet<OpId>): Replica {
+    const next = new Replica(this.#schema);
+    for (const [r, snap] of this.#bases) if (r !== record) next.loadSnapshot(snap);
+    for (const op of this.ops()) if (op.record !== record || keep.has(op.opId)) next.apply(op);
+    return next;
+  }
+
+  /** Snapshots this replica was started from (to persist them alongside the ops). */
+  bases(): RecordSnapshot[] {
+    return [...this.#bases.values()];
   }
 
   #state(record: string, field: string): FieldState {

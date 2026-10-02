@@ -1,4 +1,4 @@
-import type { WireOp } from '@accordsync/core';
+import type { RecordSnapshot, WireOp } from '@accordsync/core';
 import type { StorageAdapter, StorageSnapshot, StorageTx, StoredMeta } from './adapter';
 
 /**
@@ -20,10 +20,12 @@ export class SqliteStorage implements StorageAdapter {
   async load(): Promise<StorageSnapshot> {
     await this.#init();
     const meta = await this.db.all<{ v: string }>(`select v from accord_meta where k = 'meta'`);
+    const snapshots = await this.db.all<{ body: string }>(`select body from accord_snapshots`);
     const ops = await this.db.all<{ body: string }>(`select body from accord_ops`);
     const outbox = await this.db.all<{ op_id: string }>(`select op_id from accord_outbox`);
     return {
       meta: meta[0] ? (JSON.parse(meta[0].v) as StoredMeta) : undefined,
+      snapshots: snapshots.map((r) => JSON.parse(r.body) as RecordSnapshot),
       ops: ops.map((r) => JSON.parse(r.body) as WireOp),
       outbox: outbox.map((r) => r.op_id),
     };
@@ -41,7 +43,19 @@ export class SqliteStorage implements StorageAdapter {
     const db = this.db;
     await db.run('begin immediate');
     try {
-      if (tx.clearOps) await db.run('delete from accord_ops');
+      if (tx.clearOps) {
+        await db.run('delete from accord_ops');
+        await db.run('delete from accord_snapshots');
+      }
+      for (const r of tx.deleteSnapshots ?? []) {
+        await db.run('delete from accord_snapshots where record = ?', [r]);
+      }
+      for (const snap of tx.putSnapshots ?? []) {
+        await db.run('insert or replace into accord_snapshots (record, body) values (?, ?)', [
+          snap.record,
+          JSON.stringify(snap),
+        ]);
+      }
       for (const id of tx.deleteOps ?? [])
         await db.run('delete from accord_ops where op_id = ?', [id]);
       for (const op of tx.putOps ?? []) {
@@ -73,6 +87,9 @@ export class SqliteStorage implements StorageAdapter {
         'create table if not exists accord_ops (op_id text primary key, body text not null)',
       );
       await this.db.run('create table if not exists accord_outbox (op_id text primary key)');
+      await this.db.run(
+        'create table if not exists accord_snapshots (record text primary key, body text not null)',
+      );
       await this.db.run(
         'create table if not exists accord_meta (k text primary key, v text not null)',
       );

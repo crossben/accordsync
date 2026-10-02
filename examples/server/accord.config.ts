@@ -24,6 +24,9 @@ export default defineServer({
     ? { jwksUrl: process.env.ACCORD_JWKS_URL }
     : { hs256Secret: required('ACCORD_DEV_SECRET') },
   cors: process.env.ACCORD_CORS_ORIGINS?.split(',').filter(Boolean) ?? [],
+  ...(process.env.ACCORD_METRICS_TOKEN
+    ? { metrics: { token: process.env.ACCORD_METRICS_TOKEN } }
+    : {}),
 });
 
 function required(name: string): string {

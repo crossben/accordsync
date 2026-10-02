@@ -1,15 +1,19 @@
 import { assertNode, PROTOCOL_VERSION } from '@accordsync/core';
 import { Value } from '@sinclair/typebox/value';
 import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
+import { timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
 import { AuthError, createVerifier } from './auth';
 import type { Db } from './db';
 import type { ServerDefinition } from './define';
+import { createMetrics, type Metrics } from './metrics';
 import { PushRequestSchema } from './protocol';
 import {
   BadRequest,
   type Caller,
+  deviceTtlMs,
   Forbidden,
   pull,
   push,
@@ -22,12 +26,21 @@ export interface AppDeps {
   def: ServerDefinition;
   /** Physical time in ms (injectable for tests). */
   now?: () => number;
+  /** Share one registry with the compaction job (created when omitted). */
+  metrics?: Metrics;
 }
 
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   const verify = createVerifier(deps.def.auth);
-  const ctx: SyncContext = { db: deps.db, def: deps.def, now: deps.now ?? Date.now };
+  const metrics = deps.metrics ?? createMetrics(deps.db, deps.def);
+  const ctx: SyncContext = { db: deps.db, def: deps.def, now: deps.now ?? Date.now, metrics };
+
+  app.use(async (c, next) => {
+    const end = metrics.requestSeconds.startTimer();
+    await next();
+    end({ route: c.req.routePath, status: String(c.res.status) });
+  });
 
   app.use(async (c, next) => {
     await next();
@@ -62,6 +75,26 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
+  app.use(
+    '/v1/*',
+    bodyLimit({
+      maxSize: deps.def.limits?.maxBodyBytes ?? 5 * 1024 * 1024,
+      onError: (c) => c.json({ error: 'request body too large' }, 413),
+    }),
+  );
+
+  const metricsToken = deps.def.metrics?.token;
+  if (metricsToken) {
+    app.get('/metrics', async (c) => {
+      if (!sameSecret(c.req.header('Authorization') ?? '', `Bearer ${metricsToken}`)) {
+        return c.json({ error: 'metrics token required' }, 401);
+      }
+      return c.text(await metrics.registry.metrics(), 200, {
+        'Content-Type': metrics.registry.contentType,
+      });
+    });
+  }
+
   const caller = async (c: Context): Promise<Caller> => {
     const claims = await verify(c.req.header('Authorization'));
     const deviceId = c.req.header('Accord-Device') ?? '';
@@ -72,7 +105,7 @@ export function createApp(deps: AppDeps): Hono {
     }
     const access = deps.def.access(claims);
     const who: Caller = { sub: claims.sub, deviceId, read: access.read, write: access.write };
-    await touchDevice(deps.db, who);
+    await touchDevice(deps.db, who, deviceTtlMs(deps.def));
     return who;
   };
 
@@ -98,4 +131,11 @@ export function createApp(deps: AppDeps): Hono {
   });
 
   return app;
+}
+
+/** Constant-time comparison, so response timing reveals nothing about the secret. */
+function sameSecret(given: string, expected: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

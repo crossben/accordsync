@@ -89,10 +89,12 @@ export class LocalWriter {
    * The clock and sequence number are not rewound; op ids are never reused.
    */
   discard(opIds: Iterable<string>): void {
-    const drop = new Set(opIds);
-    const next = new Replica(this.#replica.schema);
-    for (const op of this.#replica.ops()) if (!drop.has(op.opId)) next.apply(op);
-    this.#replica = next;
+    this.#replica = this.#replica.without(new Set(opIds));
+  }
+
+  /** The record left this device's scope: forget it, except the local ops in `keep`. */
+  forget(record: string, keep: ReadonlySet<string> = new Set()): void {
+    this.#replica = this.#replica.forget(record, keep);
   }
 
   #base(record: string, field: string) {

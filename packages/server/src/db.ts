@@ -1,4 +1,4 @@
-import type { WireOp } from '@accordsync/core';
+import type { RecordSnapshot, WireOp } from '@accordsync/core';
 import { type ColumnType, type Generated, Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 
@@ -8,18 +8,23 @@ export interface Database {
   feed: {
     // bigint comes back from pg as a string
     seq: ColumnType<string, never, never>;
-    kind: 'op' | 'scope';
+    kind: 'op' | 'scope' | 'snapshot';
     record: string;
     op_id: string | null;
-    op: WireOp | null;
+    /** The op (kind 'op') or the RecordSnapshot (kind 'snapshot'). */
+    op: WireOp | RecordSnapshot | null;
     scopes: string[];
     scopes_before: string[] | null;
   };
-  records: { record: string; scopes: string[] };
+  /** `state` is null for records written before migration 0004 (rebuilt from the feed). */
+  records: { record: string; scopes: string[]; state: RecordSnapshot | null };
+  compacted_ops: { op_id: string };
   devices: {
     device_id: string;
     sub: string;
     read_keys: string[] | null;
+    cursor: ColumnType<string, never, string>;
+    needs_resync: Generated<boolean>;
     first_seen: Generated<Date>;
     last_seen: Generated<Date>;
   };
@@ -27,8 +32,10 @@ export interface Database {
 
 export type Db = Kysely<Database>;
 
-export function createDb(databaseUrl: string): Db {
+export function createDb(databaseUrl: string, poolSize = 20): Db {
   return new Kysely<Database>({
-    dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: databaseUrl }) }),
+    dialect: new PostgresDialect({
+      pool: new pg.Pool({ connectionString: databaseUrl, max: poolSize }),
+    }),
   });
 }

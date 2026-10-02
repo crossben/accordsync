@@ -43,6 +43,7 @@ export const def = defineServer({
   },
   auth: { hs256Secret: SECRET, issuer: 'test-app' },
   limits: { maxPushOps: 100 },
+  compaction: { minOps: 2, deviceTtlDays: 30 },
 });
 
 export interface Harness {
@@ -119,6 +120,7 @@ export class TestDevice {
       for (const item of page.items) {
         seen.push(item);
         if (item.type === 'op') this.writer.receive(decodeOp(item.op));
+        if (item.type === 'snapshot') this.writer.replica.loadSnapshot(item.snapshot);
       }
       this.cursor = page.cursor;
       if (!page.has_more) return seen;

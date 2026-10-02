@@ -59,6 +59,13 @@ Then `ACCORD_DATABASE_URL=postgres://… accord serve --config accord.config.ts`
 `docker compose up --build` to try the example. The wire protocol is in
 [docs/protocol.md](docs/protocol.md).
 
+## See it work
+
+[`examples/field-app`](examples/field-app/): two agents edit the same dossier offline, then
+reconnect. Visits add up, and the status they disagree on is kept as a conflict for them to settle.
+
+![Field app: a status conflict after two agents worked offline](docs/screens/field-app-conflict.png)
+
 ## Use it in an app
 
 ```ts

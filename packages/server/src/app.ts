@@ -1,6 +1,7 @@
 import { assertNode, PROTOCOL_VERSION } from '@accordsync/core';
 import { Value } from '@sinclair/typebox/value';
 import { type Context, Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { sql } from 'kysely';
 import { AuthError, createVerifier } from './auth';
 import type { Db } from './db';
@@ -32,6 +33,17 @@ export function createApp(deps: AppDeps): Hono {
     await next();
     c.header('Accord-Protocol', String(PROTOCOL_VERSION));
   });
+
+  if (deps.def.cors?.length) {
+    app.use(
+      cors({
+        origin: [...deps.def.cors],
+        allowHeaders: ['Authorization', 'Accord-Device', 'Content-Type'],
+        exposeHeaders: ['Accord-Protocol'],
+        maxAge: 600,
+      }),
+    );
+  }
 
   app.onError((err, c) => {
     if (err instanceof AuthError) return c.json({ error: err.message }, 401);

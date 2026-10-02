@@ -33,5 +33,8 @@ All notable changes to this project are documented here. The format follows
 - Storage adapters: IndexedDB, SQLite (any driver: wa-sqlite, op-sqlite, `node:sqlite`) and memory,
   with one shared contract test suite.
 - `docs/client.md`.
+- M5 field-app example (`examples/field-app`): two agents edit a dossier offline in two browser
+  tabs; counters add up, sets merge, and a status conflict is shown for them to resolve.
+- Server: `cors` option on `defineServer` for browser apps on another origin.
 - M0 skeleton: pnpm monorepo (`core`, `client`, `server`, `simulator`), server health endpoint
   with PostgreSQL migrations, Docker image, Compose file, CI.

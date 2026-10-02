@@ -1,17 +1,7 @@
 // An Accord server for a field app: dossiers belong to an agent and a zone.
 // Run: ACCORD_DATABASE_URL=... ACCORD_DEV_SECRET=... accord serve --config accord.config.ts
-import { conflict, counter, defineSchema, defineServer, lww, set } from '@accordsync/server';
-
-const schema = defineSchema({
-  dossier: {
-    agent: lww(),
-    zone: lww(),
-    client_name: lww(),
-    documents: set(),
-    visits: counter(),
-    status: conflict(), // never auto-resolved
-  },
-});
+import { defineServer } from '@accordsync/server';
+import { schema } from './schema.ts';
 
 export default defineServer({
   schema,
@@ -23,17 +13,17 @@ export default defineServer({
         typeof r.fields.zone === 'string' ? `zone:${r.fields.zone}` : undefined,
       ].filter((k) => k !== undefined),
   },
-  // Which keys a user may read and write, from the JWT your app issued.
+  // Which keys a user may read and write, from the JWT your app issued. Here, agents work on
+  // their own dossiers and on every dossier of their zones.
   access: (claims) => {
     const zones = Array.isArray(claims.zones) ? claims.zones.map(String) : [];
-    return {
-      read: [`agent:${claims.sub}`, ...zones.map((z) => `zone:${z}`)],
-      write: [`agent:${claims.sub}`],
-    };
+    const keys = [`agent:${claims.sub}`, ...zones.map((z) => `zone:${z}`)];
+    return { read: keys, write: keys };
   },
   auth: process.env.ACCORD_JWKS_URL
     ? { jwksUrl: process.env.ACCORD_JWKS_URL }
     : { hs256Secret: required('ACCORD_DEV_SECRET') },
+  cors: process.env.ACCORD_CORS_ORIGINS?.split(',').filter(Boolean) ?? [],
 });
 
 function required(name: string): string {

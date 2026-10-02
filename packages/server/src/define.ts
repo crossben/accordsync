@@ -21,6 +21,8 @@ export interface ServerDefinition<S extends Schema = Schema> {
   /** The scope keys a user may read and write, from their verified JWT claims. */
   access: (claims: Claims) => { read: readonly string[]; write: readonly string[] };
   auth: AuthConfig;
+  /** Browser origins allowed to call the sync API, e.g. ['https://app.example.com']. */
+  cors?: readonly string[];
   limits?: {
     /** Ops per push request (default 500). */
     maxPushOps?: number;

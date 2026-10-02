@@ -63,6 +63,10 @@ pnpm build
 pnpm test            # server tests start PostgreSQL 16 with Testcontainers
 pnpm lint && pnpm typecheck
 
+# Convergence suite: more cases, or replay one failing seed exactly
+ACCORD_SIM_RUNS=5000 pnpm --filter @accordsync/simulator test
+ACCORD_SIM_SEED=1234 pnpm --filter @accordsync/simulator test
+
 docker compose up --build   # PostgreSQL + server on :8080
 curl localhost:8080/health
 ```

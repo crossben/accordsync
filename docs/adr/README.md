@@ -10,3 +10,4 @@ supersedes the old one.
 | [0003](0003-merge-strategies-v1.md)   | Four merge strategies in v1; conflicts resolved by operations |
 | [0004](0004-scope-exit.md)            | Scope exit                                                    |
 | [0005](0005-compaction-device-ttl.md) | Log compaction and retired devices                            |
+| [0006](0006-refused-ops-roll-back.md) | Refused ops are rolled back on the device that wrote them     |

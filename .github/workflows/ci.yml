@@ -25,6 +25,10 @@ jobs:
       - run: pnpm build
       # Server tests start PostgreSQL 16 through Testcontainers (Docker is available on the runner).
       - run: pnpm test
+        env:
+          # Thousands of generated cases per CI run; failures print a seed to replay locally.
+          ACCORD_PROPERTY_RUNS: '2000'
+          ACCORD_SIM_RUNS: '3000'
 
   image:
     runs-on: ubuntu-latest

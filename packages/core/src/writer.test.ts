@@ -136,4 +136,17 @@ describe('LocalWriter', () => {
     expect(() => a.receive(liar.inc('dossier:1', 'visits', 1))).toThrow(/ahead/);
     expect(a.replica.read('dossier:1')).toBeUndefined();
   });
+
+  it('discard rolls back a refused op and keeps the rest', () => {
+    const a = device('a');
+    const keep = a.inc('dossier:1', 'visits', 2);
+    const refused = a.inc('dossier:1', 'visits', 40);
+    a.assign('dossier:2', 'status', 'approved');
+    a.discard([refused.opId]);
+    expect(a.replica.read('dossier:1')?.visits).toBe(2);
+    expect(a.replica.has(keep.opId)).toBe(true);
+    expect(a.replica.has(refused.opId)).toBe(false);
+    expect(a.replica.read('dossier:2')?.status).toEqual({ value: 'approved' });
+    expect(a.inc('dossier:1', 'visits', 1).opId).toBe('a:4'); // op ids are never reused
+  });
 });

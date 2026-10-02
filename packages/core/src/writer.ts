@@ -21,7 +21,7 @@ export interface LocalWriterOptions {
  * locally first and returned so the caller can queue it for sync.
  */
 export class LocalWriter {
-  readonly replica: Replica;
+  #replica: Replica;
   readonly deviceId: string;
   readonly #now: () => number;
   readonly #maxSkewMs: number;
@@ -31,11 +31,15 @@ export class LocalWriter {
   constructor(opts: LocalWriterOptions) {
     assertNode(opts.deviceId);
     this.deviceId = opts.deviceId;
-    this.replica = new Replica(opts.schema);
+    this.#replica = new Replica(opts.schema);
     this.#now = opts.now;
     this.#maxSkewMs = opts.maxSkewMs ?? DEFAULT_MAX_SKEW_MS;
     this.#hlc = opts.resume?.hlc ?? initialHlc(opts.deviceId);
     this.#seq = opts.resume?.seq ?? 0;
+  }
+
+  get replica(): Replica {
+    return this.#replica;
   }
 
   get clock(): Hlc {
@@ -77,6 +81,18 @@ export class LocalWriter {
     const result = this.replica.apply(op);
     this.#hlc = next;
     return result;
+  }
+
+  /**
+   * Rolls back ops the server refused: the replica is rebuilt from its log without them, so this
+   * device converges with everyone else instead of keeping a change nobody else will ever see.
+   * The clock and sequence number are not rewound; op ids are never reused.
+   */
+  discard(opIds: Iterable<string>): void {
+    const drop = new Set(opIds);
+    const next = new Replica(this.#replica.schema);
+    for (const op of this.#replica.ops()) if (!drop.has(op.opId)) next.apply(op);
+    this.#replica = next;
   }
 
   #base(record: string, field: string) {

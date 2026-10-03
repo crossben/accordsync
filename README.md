@@ -118,7 +118,7 @@ non-stop. Details, hardware and caveats: [load/README.md](load/README.md).
 
 ## Security
 
-Report vulnerabilities privately: see [SECURITY.md](SECURITY.md). Before deploying, go through the
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately: see [SECURITY.md](SECURITY.md). Before deploying, go through the
 [security checklist](docs/security.md).
 
 ## Licence

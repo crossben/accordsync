@@ -20,7 +20,7 @@ export interface Database {
   };
   /** `state` is null for records written before migration 0004 (rebuilt from the feed). */
   records: { record: string; scopes: string[]; state: RecordSnapshot | null };
-  compacted_ops: { op_id: string; device: string; op_seq: string };
+  compacted_ops: { op_id: string; device: string; op_seq: string; op_hash: string | null };
   devices: {
     device_id: string;
     sub: string;

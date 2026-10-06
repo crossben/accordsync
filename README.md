@@ -87,6 +87,7 @@ Start a project in one command: `npm create accord my-app`.
 | [docs/react-native.md](docs/react-native.md)  | op-sqlite storage, background-friendly sync                       |
 | [docs/flutter.md](docs/flutter.md)            | Dart and Flutter packages: drift storage, widgets, lifecycle      |
 | [docs/scopes.md](docs/scopes.md)              | Tested scope patterns: personal, team, supervisor, tenant, shared |
+| [conformance/](conformance/README.md)         | Server conformance suite: run it against any Accord server        |
 
 ## Repository layout
 
@@ -97,6 +98,7 @@ Start a project in one command: `npm create accord my-app`.
 | `packages/server`    | Sync server: Hono + PostgreSQL                                      |
 | `packages/simulator` | Deterministic network and device simulator                          |
 | `vectors/`           | Golden test vectors every implementation must pass                  |
+| `conformance/`       | Black-box HTTP suite every server implementation must pass          |
 | `docs/adr/`          | Architecture decision records                                       |
 
 ## Develop
@@ -109,6 +111,7 @@ pnpm install
 pnpm build
 pnpm test            # server tests start PostgreSQL 16 with Testcontainers
 pnpm lint && pnpm typecheck
+pnpm conformance     # black-box server conformance suite (conformance/README.md)
 
 # Convergence suite: more cases, or replay one failing seed exactly
 ACCORD_SIM_RUNS=5000 pnpm --filter @accordsync/simulator test

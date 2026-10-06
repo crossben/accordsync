@@ -10,6 +10,7 @@ import {
   Replica,
   type WireOp,
 } from '@accordsync/core';
+import { createHash } from 'node:crypto';
 import { type Insertable, sql } from 'kysely';
 import type { Database, Db } from './db';
 import type { ServerDefinition } from './define';
@@ -204,14 +205,16 @@ export async function push(
             await trx.selectFrom('feed').select(['op_id', 'op']).where('op_id', 'in', ids).execute()
           ).map((r) => [r.op_id!, canonicalJson(r.op)]),
         );
-        const compacted = new Set(
+        // Folded ops keep a hash of their content (migration 0006): null only for rows folded
+        // before it, which are acknowledged as before.
+        const compacted = new Map(
           (
             await trx
               .selectFrom('compacted_ops')
-              .select('op_id')
+              .select(['op_id', 'op_hash'])
               .where('op_id', 'in', ids)
               .execute()
-          ).map((r) => r.op_id),
+          ).map((r) => [r.op_id, r.op_hash]),
         );
         let scopes: string[] | null = isNew ? null : existing.scopes;
         let changed = false;
@@ -220,6 +223,14 @@ export async function push(
         for (const op of pending) {
           const previous = stored.get(op.opId);
           if (previous !== undefined && previous !== canonicalJson(encodeOp(op))) {
+            refused.push({
+              op_id: op.opId,
+              reason: `op id already used: ${op.opId} names another op`,
+            });
+            continue;
+          }
+          const folded = compacted.get(op.opId);
+          if (typeof folded === 'string' && folded !== opHash(encodeOp(op))) {
             refused.push({
               op_id: op.opId,
               reason: `op id already used: ${op.opId} names another op`,
@@ -368,6 +379,27 @@ export async function pull(
   const limit = Math.max(1, Math.min(requested, ctx.def.limits?.maxPullLimit ?? 1000));
   const read = normalize(caller.read);
 
+  // Two pulls from one device at once can collide on its `devices` row under repeatable read
+  // (PostgreSQL error 40001). The pull only reads the feed, so running it again is always safe.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await pullOnce(ctx, caller, cursor, limit, read);
+    } catch (e) {
+      // Each round of colliding pulls lets at least one through, so this always ends; the jitter
+      // keeps retries from colliding again in lockstep.
+      if ((e as { code?: unknown }).code !== '40001' || attempt >= 20) throw e;
+      await new Promise((r) => setTimeout(r, Math.random() * 10 * attempt));
+    }
+  }
+}
+
+async function pullOnce(
+  ctx: SyncContext,
+  caller: Caller,
+  cursor: number,
+  limit: number,
+  read: string[],
+): Promise<PullResponse> {
   return ctx.db
     .transaction()
     .setIsolationLevel('repeatable read')
@@ -585,4 +617,12 @@ function sameKeys(a: readonly string[], b: readonly string[]): boolean {
   const x = normalize(a);
   const y = normalize(b);
   return x.length === y.length && x.every((k, i) => k === y[i]);
+}
+
+/**
+ * The hash a compacted op is remembered by: SHA-256, hex, of the UTF-8 canonical JSON of its wire
+ * form. Every server implementation must compute it the same way (it is stored in the database).
+ */
+export function opHash(op: WireOp): string {
+  return createHash('sha256').update(canonicalJson(op), 'utf8').digest('hex');
 }

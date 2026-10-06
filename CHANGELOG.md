@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `conformance/`: a black-box HTTP conformance suite every Accord server must pass (`pnpm
+conformance`), with the profile and control API other implementations configure.
+
+### Fixed
+
+- `@accordsync/server`: a different op reusing the id of an op folded by compaction (a device that
+  lost its storage and pushed before its first pull) was acknowledged and silently dropped. Folded
+  ops now keep a hash of their content (migration `0006_compacted_op_hash`), and such a push is
+  refused with `op id already used`.
+- `@accordsync/server`: two simultaneous pulls from one device could answer 500 (PostgreSQL
+  serialization conflict); the pull is now retried.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added

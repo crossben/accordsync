@@ -95,6 +95,27 @@ describe('push (docs/protocol.md "Push", ADR-0006, ADR-0010)', () => {
     for (const r of refused) expect(r.reason).toMatch(/^malformed op/);
   });
 
+  it('refuses an op carrying a lone surrogate as malformed; the rest of the batch applies (no 500)', async () => {
+    const first = alice.assign('dossier:1', 'agent', 'alice');
+    const value = alice.assign('dossier:1', 'client_name', 'aXb');
+    const element = alice.add('dossier:1', 'docs', 'cXd');
+    const record = alice.inc('dossier:eXf', 'visits');
+    const last = alice.inc('dossier:1', 'visits');
+    // JSON carries a lone surrogate as an escape; JSON.stringify would write it the same way, but
+    // the body is spelled out so the test does not depend on it.
+    const body = `{"ops":[${[first, value, element, record, last]
+      .map((op) => JSON.stringify(op).replace(/([ace])X([bdf])/, '$1\\ud800$2'))
+      .join(',')}]}`;
+    expect(body).toContain('"a\\ud800b"');
+    expect(body).toContain('"c\\ud800d"');
+    const r = await alice.pushBody(body);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.acked).toEqual([first.op_id, last.op_id]);
+    expect(r.body.refused.map((x) => x.op_id)).toEqual([value.op_id, element.op_id, record.op_id]);
+    for (const x of r.body.refused) expect(x.reason).toMatch(/^malformed op/);
+    expect(opIds(await reader.pullAll())).toEqual([first.op_id, last.op_id]);
+  });
+
   it('rejects the whole push with 400 when an op has no readable op_id', async () => {
     const good = alice.assign('dossier:1', 'agent', 'alice');
     for (const op of [{ nonsense: true }, null, 'op', { ...good, op_id: 42 }]) {

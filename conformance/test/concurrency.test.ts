@@ -72,6 +72,44 @@ describe('concurrent pushes and pulls (ADR-0010)', () => {
     }
   }, 60_000);
 
+  it('a pull never moves past a transaction still running: its ops arrive once it commits', async () => {
+    const early = await Device.of('early', 'early', { zones: ['z'] });
+    const late = await Device.of('late', 'late', { zones: ['z'] });
+    const reader = await Device.of('reader', 'reader', { readonly_zones: ['z'] });
+    await early.pushOk([early.assign('dossier:held', 'zone', 'z')]);
+    expect(opIds(await reader.pullAll())).toEqual(['early:1']);
+
+    // The early push starts first and stays open: it creates dossier:a (its transaction now writes)
+    // and then waits for the row lock on dossier:held.
+    await control.holdRecord('dossier:held');
+    let slow: ReturnType<Device['pushOk']> | undefined;
+    try {
+      slow = early.pushOk([
+        early.assign('dossier:a', 'zone', 'z'),
+        early.inc('dossier:held', 'visits'),
+      ]);
+      for (let i = 0; (await control.held()).waiting < 1; i++) {
+        if (i > 200) throw new Error('the push never waited for the held record');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // A later transaction commits while the early one is still open.
+      expect((await late.pushOk([late.assign('dossier:b', 'zone', 'z')])).acked).toEqual([
+        'late:1',
+      ]);
+      // Whatever this pull returns, its cursor must not pass the early transaction.
+      const during = opIds(await reader.pullAll());
+      expect(during).not.toContain('early:2');
+      await control.release();
+      expect((await slow).acked).toEqual(['early:2', 'early:3']);
+      const after = opIds(await reader.pullAll());
+      expect(new Set([...during, ...after])).toEqual(new Set(['late:1', 'early:2', 'early:3']));
+      expect(during.length + after.length).toBe(3);
+    } finally {
+      await control.release();
+      await slow?.catch(() => undefined);
+    }
+  });
+
   it('simultaneous pulls from one device all succeed (no 500 from a serialization conflict)', async () => {
     const d = await Device.of('busy-phone', 'busy', { zones: ['z'] });
     await d.pushOk([d.assign('dossier:1', 'zone', 'z'), d.inc('dossier:1', 'visits')]);

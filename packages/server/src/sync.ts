@@ -120,6 +120,10 @@ export async function push(
     let op: Op;
     try {
       op = decodeOp(input);
+      // PostgreSQL cannot store a lone surrogate (jsonb refuses it, text replaces it): refuse the
+      // op instead of failing the whole push.
+      const bad = lonePath(input);
+      if (bad !== undefined) throw new Error(`lone surrogate in ${bad}`);
     } catch (e) {
       const opId = (input as { op_id?: unknown } | null)?.op_id;
       if (typeof opId !== 'string') throw new BadRequest(`malformed op: ${(e as Error).message}`);
@@ -406,7 +410,7 @@ async function pullOnce(
     .execute(async (trx): Promise<PullResponse> => {
       const device = await trx
         .selectFrom('devices')
-        .select(['read_keys', 'needs_resync', 'max_op_seq'])
+        .select(['read_keys', 'needs_resync', 'max_op_seq', 'delta_keys', 'delta_cursor'])
         .where('device_id', '=', caller.deviceId)
         .executeTakeFirstOrThrow();
       if (cursor > 0 && device.needs_resync) {
@@ -414,7 +418,15 @@ async function pullOnce(
         return { resync_required: true };
       }
       // Read scopes changed (new claims): send what entered and what left, instead of everything.
-      const before = device.read_keys ?? [];
+      // A delta stays pending until the device pulls from a cursor above the one it was sent from
+      // (it then has the answer). A pull at or below that cursor is a retry of a lost answer: the
+      // delta is computed again from the keys the device had before it (ADR-0011, 2026-10-07).
+      const pending =
+        device.delta_keys !== null && device.delta_cursor !== null
+          ? { keys: device.delta_keys, cursor: Number(device.delta_cursor) }
+          : undefined;
+      const retry = cursor > 0 && pending !== undefined && cursor <= pending.cursor;
+      const before = retry ? pending!.keys : (device.read_keys ?? []);
       const keysChanged = cursor > 0 && !sameKeys(before, read);
       let delta: { history: { kind: string; op: unknown }[]; exits: string[] } | undefined;
       if (keysChanged) {
@@ -428,19 +440,31 @@ async function pullOnce(
           ctx.metrics?.pulls.inc({ result: 'resync_required' });
           return { resync_required: true };
         }
-        await trx
-          .updateTable('devices')
-          .set({ read_keys: read })
-          .where('device_id', '=', caller.deviceId)
-          .execute();
       }
       // The device has applied everything up to `cursor`: compaction may fold ops below it.
       await trx
         .updateTable('devices')
         .set(
           cursor === 0
-            ? { read_keys: read, needs_resync: false, cursor: '0' }
-            : { cursor: sql`greatest(cursor, ${cursor})` as never },
+            ? {
+                read_keys: read,
+                needs_resync: false,
+                cursor: '0',
+                delta_keys: null,
+                delta_cursor: null,
+              }
+            : {
+                cursor: sql`greatest(cursor, ${cursor})` as never,
+                ...(keysChanged
+                  ? {
+                      read_keys: read,
+                      delta_keys: before,
+                      delta_cursor: retry ? pending!.cursor : cursor,
+                    }
+                  : pending
+                    ? { read_keys: read, delta_keys: null, delta_cursor: null }
+                    : {}),
+              },
         )
         .where('device_id', '=', caller.deviceId)
         .execute();
@@ -578,6 +602,27 @@ async function scopeDelta(
           .orderBy('seq')
           .execute();
   return { history, exits: leaving.map((r) => r.record) };
+}
+
+/** A surrogate that is not half of a pair (with the u flag, pairs read as one code point). */
+const LONE = /\p{Cs}/u;
+
+/** Where a lone surrogate hides in a JSON value (a key or a string), or undefined if nowhere. */
+function lonePath(value: unknown, path = 'op'): string | undefined {
+  if (typeof value === 'string') return LONE.test(value) ? path : undefined;
+  if (Array.isArray(value)) {
+    for (const [i, v] of value.entries()) {
+      const found = lonePath(v, `${path}[${i}]`);
+      if (found) return found;
+    }
+  } else if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (LONE.test(k)) return `${path} (a key)`;
+      const found = lonePath(v, `${path}.${k}`);
+      if (found) return found;
+    }
+  }
+  return undefined;
 }
 
 /** A record's state on the server: its latest snapshot, then the ops after it. */

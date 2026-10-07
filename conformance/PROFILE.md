@@ -74,6 +74,15 @@ A second HTTP port, for tests only (never expose it). Responses are JSON; errors
 | `POST /compact`                        | Runs compaction once, now. Returns `{ "watermark", "records", "opsFolded", "tombstonesPruned" }` (numbers); the suite checks `records` and `opsFolded`.                                                                                                                                                                             |
 | `POST /age-device?device=&days=`       | Sets the device's last-seen time to `days` days ago, as if it had been offline that long. `404` for an unknown device. `{}`.                                                                                                                                                                                                        |
 
+Every implementation must also provide these three routes, used by the pull-horizon test
+(ADR-0010). They act on the database only, so they are the same SQL for every server:
+
+| Route                       | Does                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /hold-record?record=` | On a database connection of its own: `begin`, then `select record from records where record = $1 for update`, and answers `{}` once the row is locked, keeping the transaction open. `404` for an unknown record, `409` if a record is already held. Pushes writing that record then wait (after creating any new record rows of the batch). |
+| `GET /held`                 | `{ "waiting": n }`: how many sessions the held transaction is blocking, `select count(*) from pg_stat_activity where <holder pid> = any(pg_blocking_pids(pid))` (`0` when nothing is held).                                                                                                                                                  |
+| `POST /release`             | Rolls the held transaction back and answers `{}` once it has ended; `{}` when nothing is held. `POST /reset` releases it too.                                                                                                                                                                                                                |
+
 ## Refusal reasons
 
 Clients show refusal reasons to people and match some of them. The suite checks:

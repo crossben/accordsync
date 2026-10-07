@@ -25,6 +25,10 @@ export interface Database {
     device_id: string;
     sub: string;
     read_keys: string[] | null;
+    /** A scope delta not yet received: the read keys before it (migration 0007). */
+    delta_keys: ColumnType<string[] | null, never, string[] | null>;
+    /** The cursor that delta was pulled from; a pull above it shows it was received. */
+    delta_cursor: ColumnType<string | null, never, string | number | null>;
     cursor: ColumnType<string, never, string>;
     needs_resync: Generated<boolean>;
     push_floor: ColumnType<string, never, string>;

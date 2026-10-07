@@ -26,7 +26,7 @@ The server under test must:
 
 1. be configured with the **conformance profile** ([PROFILE.md](PROFILE.md),
    [profile.json](profile.json)) on an empty PostgreSQL database;
-2. expose the **control API** (token, reset, compact, age-device) on a second, test-only port, as
+2. expose the **control API** (token, reset, compact, age-device, hold-record, held, release) on a second, test-only port, as
    described in PROFILE.md.
 
 Then point the suite at it:

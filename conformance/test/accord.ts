@@ -127,6 +127,12 @@ export const control = {
       'POST',
       `/age-device?device=${encodeURIComponent(device)}&days=${encodeURIComponent(days)}`,
     ),
+  /** Locks a record's row in a transaction of its own, until `release()`. */
+  holdRecord: (record: string) =>
+    ctl<unknown>('POST', `/hold-record?record=${encodeURIComponent(record)}`),
+  /** How many database sessions are waiting for the held row lock. */
+  held: () => ctl<{ waiting: number }>('GET', '/held'),
+  release: () => ctl<unknown>('POST', '/release'),
   async token(
     sub: string,
     claims: { zones?: string[]; readonly_zones?: string[]; exp_in?: number } = {},

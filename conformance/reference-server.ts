@@ -88,6 +88,7 @@ async function control(url: URL, method: string): Promise<unknown> {
     };
   }
   if (method === 'POST' && url.pathname === '/reset') {
+    await release();
     await sql`truncate feed, records, devices, compacted_ops restart identity`.execute(db);
     app = createApp({ db, def });
     return {};
@@ -104,7 +105,62 @@ async function control(url: URL, method: string): Promise<unknown> {
     if (Number(r.numAffectedRows ?? 0) === 0) throw new HttpError(404, 'unknown device');
     return {};
   }
+  if (method === 'POST' && url.pathname === '/hold-record') {
+    const record = q.get('record');
+    if (!record) throw new HttpError(400, 'record is required');
+    if (hold) throw new HttpError(409, 'a record is already held');
+    return holdRecord(record);
+  }
+  if (method === 'GET' && url.pathname === '/held') {
+    if (!hold) return { waiting: 0 };
+    const r = await sql<{ n: string }>`select count(*) as n from pg_stat_activity
+      where ${hold.pid}::int = any(pg_blocking_pids(pid))`.execute(db);
+    return { waiting: Number(r.rows[0]!.n) };
+  }
+  if (method === 'POST' && url.pathname === '/release') {
+    await release();
+    return {};
+  }
   throw new HttpError(404, 'not found');
+}
+
+/** The record lock held by `/hold-record`: its session's pid, and how to end it. */
+let hold: { pid: number; release: () => void; done: Promise<void> } | undefined;
+
+function holdRecord(record: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const done = db
+      .connection()
+      .execute(async (conn) => {
+        await sql`begin`.execute(conn);
+        try {
+          const row =
+            await sql`select record from records where record = ${record} for update`.execute(conn);
+          if (row.rows.length === 0) throw new HttpError(404, 'unknown record');
+          const pid = (await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(conn))
+            .rows[0]!.pid;
+          let release!: () => void;
+          const released = new Promise<void>((r) => (release = r));
+          hold = { pid, release, done };
+          resolve({});
+          await released;
+        } finally {
+          await sql`rollback`.execute(conn);
+        }
+      })
+      .catch((e: unknown) => {
+        hold = undefined;
+        reject(e);
+      });
+  });
+}
+
+async function release(): Promise<void> {
+  const h = hold;
+  if (!h) return;
+  h.release();
+  await h.done;
+  hold = undefined;
 }
 
 class HttpError extends Error {

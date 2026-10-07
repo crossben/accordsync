@@ -249,6 +249,54 @@ describe('scope changes from new claims (ADR-0011) and retired devices (ADR-0005
     expect(items.some((i) => i.type === 'op' && i.op.record === 'dossier:t0')).toBe(false);
   });
 
+  it('a scope delta whose answer was lost is sent again by the retry at the same cursor', async () => {
+    const { alice, bob } = await seed(1);
+    const history = ['bob-phone:1', 'bob-phone:2', 'bob-phone:3'];
+    alice.jwt = await control.token('alice', { zones: ['dakar', 'thies'] });
+    // The answer carrying the delta is lost: the device keeps its cursor.
+    expect(opIds((await alice.page(alice.cursor)).items)).toEqual(history);
+    const retry = await alice.page(alice.cursor);
+    expect(opIds(retry.items)).toEqual(history);
+    alice.cursor = retry.cursor;
+    // Received: the next pull, from the new cursor, does not send it again.
+    await bob.pushOk([bob.inc('dossier:t0', 'visits')]);
+    expect(opIds(await alice.pullAll())).toEqual(['bob-phone:4']);
+    expect(await alice.pullAll()).toEqual([]);
+  });
+
+  it('an exit whose answer was lost is sent again by the retry at the same cursor', async () => {
+    const { alice, bob } = await seed(1);
+    alice.jwt = await control.token('alice', { zones: ['dakar', 'thies'] });
+    await alice.pullAll();
+    alice.jwt = await control.token('alice', { zones: ['dakar'] });
+    const exit = [{ type: 'exit', record: 'dossier:t0' }];
+    expect((await alice.page(alice.cursor)).items).toEqual(exit); // lost
+    const retry = await alice.page(alice.cursor);
+    expect(retry.items).toEqual(exit);
+    alice.cursor = retry.cursor;
+    await bob.pushOk([bob.inc('dossier:t0', 'visits')]);
+    await alice.pushOk([alice.inc('dossier:1', 'visits')]);
+    expect(await alice.pullAll()).toEqual([
+      { type: 'op', op: expect.objectContaining({ op_id: 'alice-phone:3' }) },
+    ]);
+  });
+
+  it('claims that change again before a lost delta is received: the retry sends the whole change', async () => {
+    const { alice } = await seed(1);
+    const carol = await Device.of('carol-phone', 'carol', { zones: ['kaolack'] });
+    await carol.pushOk([
+      carol.assign('dossier:k', 'agent', 'carol'),
+      carol.assign('dossier:k', 'zone', 'kaolack'),
+    ]);
+    alice.jwt = await control.token('alice', { zones: ['dakar', 'thies'] });
+    await alice.page(alice.cursor); // lost
+    alice.jwt = await control.token('alice', { zones: ['dakar', 'thies', 'kaolack'] });
+    expect(new Set(opIds(await alice.pullAll()))).toEqual(
+      new Set(['bob-phone:1', 'bob-phone:2', 'bob-phone:3', 'carol-phone:1', 'carol-phone:2']),
+    );
+    expect(await alice.pullAll()).toEqual([]);
+  });
+
   it('read-only zones count as read scope: gaining one brings its records', async () => {
     const { alice } = await seed(1);
     alice.jwt = await control.token('alice', { zones: ['dakar'], readonly_zones: ['thies'] });

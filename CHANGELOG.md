@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
 ### Added
 
 - `conformance/`: a black-box HTTP conformance suite every Accord server must pass (`pnpm
@@ -121,6 +123,7 @@ First release.
 - M0 skeleton: pnpm monorepo (`core`, `client`, `server`, `simulator`), server health endpoint
   with PostgreSQL migrations, Docker image, Compose file, CI.
 
-[Unreleased]: https://github.com/crossben/accordsync/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/crossben/accordsync/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/crossben/accordsync/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/crossben/accordsync/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crossben/accordsync/releases/tag/v0.1.0

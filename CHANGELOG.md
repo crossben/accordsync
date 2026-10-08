@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-08
+
 ### Fixed
 
 - `@accordsync/server`: the scope-delta history is bounded at the device's cursor, so a record that
@@ -134,7 +136,8 @@ First release.
 - M0 skeleton: pnpm monorepo (`core`, `client`, `server`, `simulator`), server health endpoint
   with PostgreSQL migrations, Docker image, Compose file, CI.
 
-[Unreleased]: https://github.com/crossben/accordsync/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/crossben/accordsync/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/crossben/accordsync/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/crossben/accordsync/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/crossben/accordsync/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crossben/accordsync/releases/tag/v0.1.0

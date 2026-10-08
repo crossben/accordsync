@@ -94,6 +94,7 @@ approve it. To add a package: `safe-install add @accordsync/client` (or `npm ins
 | [docs/flutter.md](docs/flutter.md)            | Dart and Flutter packages: drift storage, widgets, lifecycle      |
 | [docs/php.md](docs/php.md)                    | PHP server for Laravel, Symfony or plain PHP (PSR-15)             |
 | [docs/python.md](docs/python.md)              | Python client, and the server for FastAPI or Django               |
+| [docs/java.md](docs/java.md)                  | Java client, and the server for Spring Boot                       |
 | [docs/scopes.md](docs/scopes.md)              | Tested scope patterns: personal, team, supervisor, tenant, shared |
 | [conformance/](conformance/README.md)         | Server conformance suite: run it against any Accord server        |
 

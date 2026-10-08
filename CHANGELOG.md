@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `@accordsync/client`: a write made while a sync round was in flight waited for the next
+  `syncIntervalMs` (30 s by default) instead of syncing about 50 ms after the round. Found by a
+  flaky test in the Java client.
+
 ## [0.3.1] - 2026-10-08
 
 ### Fixed

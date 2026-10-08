@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `@accordsync/server`: the scope-delta history is bounded at the device's cursor, so a record that
+  left the caller's scope after the cursor sends nothing written since (found by an automated
+  security review of the scope-delta change above, before any release).
+
+- `@accordsync/server`: a record that moved into a key shared by a device's old and new read keys,
+  while its claims changed, reached the device without its history (only the op that moved it). The
+  scope delta is now judged on each record's scopes at the device's cursor, not its current ones
+  (ADR-0011, update 2026-10-07 b). Found by the Java mixed-server fleet. No migration.
+
 ## [0.3.0] - 2026-10-07
 
 ### Added
